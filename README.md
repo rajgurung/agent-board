@@ -4,15 +4,48 @@ A live board of your work in Claude Code. Each piece of work shows its stage,
 what happens next, and the agents working on it. The board sits above the
 prompt, and `/board` opens the full view.
 
+Above the prompt, one line per piece of work. What needs you comes first:
+
 ```
-◆ threads   Approve design  ████░░░░ 4/8  waiting: approve the mockup
-● login-fix Build           ██████░░ 6/8  staff-engineer 3m 12s
-+1 more  · /board
+◆ login-fix Review         ██████░░ 3/4  waiting: approve the fix before merge
+● threads   Build          ██████░░ 6/8  staff-engineer 18m 40s
+1 other agent running  · /board
+```
+
+`/board` opens the full view. Pick a piece of work on the left to see its
+stages, what happens next, every agent that has worked on it (with how long it
+took and what it is doing now), notes and links:
+
+```
+Loops                           threads: Chat: threads and emoji
+◆ login-fix 3/4                 ● running   ███████████████░░░░░ 6/8 Build
+● threads 6/8                   ✓ Brief → ✓ Approve brief → ✓ Design → ✓ Approve design → ✓ Plan → [Build] →
+Other agents 1                  Review → PR
+Show done (5)                   Next: PR 1 merged and live; staff engineer building PR 2 (threads)
+◆ waiting on you  ● running  ✓
+done                            Agents
+                                ✓ product-manager    1m 42s  Write the brief
+                                ✓ designer           10m 15s Design the mockups
+                                ✓ general-purpose    7m 58s  Write the build plan
+                                ✓ staff-reviewer     4m 34s  Review the plan
+                                ✓ staff-engineer     26m 14s Build PR 1 reactions
+                                ● staff-engineer     18m 40s Bash · Build PR 2 threads
+                                ○ you                -       Brief and mockup approved, all recommendations
+                                ○ planner            -       Plan written: PR 1 reactions, PR 2 threads; 2 migrat…
+                                ○ code-review-bot    -       Approved PR 1 (#35)
+
+                                Links
+                                Brief: docs/briefs/chat-threads.md
+                                Mockup: docs/mockups/chat-threads.html
+                                Plan: docs/plans/chat-threads.md
+                                PR 1: https://github.com/you/your-app/pull/35
 ```
 
 - **◆ waiting on you.** Claude needs a decision or an approval.
 - **● running.** Claude or its agents are working.
 - **✓ done.** The work is finished. `/board` can show or hide finished work.
+- **○ a note.** A line from the loop file's `notes`, for people or steps that
+  aren't agents, like your approval or a code review bot.
 
 ## Install
 
