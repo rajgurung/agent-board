@@ -9,8 +9,9 @@ Above the prompt, one line per piece of work. What needs you comes first:
 <img src="docs/band.svg" alt="The board above the prompt: login-fix waiting for approval, threads in Build with a staff engineer running" width="700">
 
 `/board` opens the full view. Pick a piece of work on the left to see its
-stages, what happens next, every agent that has worked on it (with how long it
-took and what it is doing now), notes and links:
+stages, what happens next, every agent that has worked on it (how long it took,
+how many tokens it used and what it is doing now), notes, links and the work's
+token total:
 
 <img src="docs/board.svg" alt="The /board view: the list of work on the left, and the threads work on the right with its stages, agents, notes and links">
 
@@ -70,6 +71,18 @@ You'll probably want to keep these files out of git:
 ```
 .claude/loops/
 ```
+
+## Token counts
+
+Each agent shows the tokens it has used. The number counts up while it runs.
+That includes input, output and prompt cache reads and writes. Cache reads are
+most of it, so the total looks large; the board shows the cache share beside it.
+
+- **Per piece of work:** the sidebar and the detail view show its total. Totals
+  are saved per project, so they cover the work's whole life, across sessions.
+- **Main session:** your own conversation with Claude often moves between
+  several pieces of work, so it isn't split between them. It shows as its own
+  line in the sidebar.
 
 ## Develop
 

@@ -1,4 +1,4 @@
-import type { AgentRun, LoopPlan } from '../types'
+import type { AgentRun, LoopPlan, Tokens } from '../types'
 
 export function elapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -79,4 +79,40 @@ export function sortLoops(loops: LoopPlan[], runs: AgentRun[]): LoopPlan[] {
 // The text after the loop prefix, so rows don't repeat the loop's name.
 export function shortDescription(run: AgentRun): string {
   return run.description.replace(/^[\w-]+:\s/, '')
+}
+
+export const NO_TOKENS: Tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+export function addTokens(a: Tokens, b: Tokens): Tokens {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+  }
+}
+
+export function totalTokens(t: Tokens): number {
+  return t.input + t.output + t.cacheRead + t.cacheWrite
+}
+
+// 950, 12.4k, 318k, 1.2M
+export function formatTokens(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 100_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+}
+
+// Share of the total that was read from the prompt cache, as a whole percent.
+export function cacheShare(t: Tokens): number {
+  const total = totalTokens(t)
+  return total === 0 ? 0 : Math.round((t.cacheRead / total) * 100)
+}
+
+// A loop's tokens: its finished agents' saved total, plus agents not yet saved.
+export function loopTokens(loop: LoopPlan, runs: AgentRun[], loops: LoopPlan[], banked: Record<string, Tokens>): Tokens {
+  return runsFor(loop, runs, loops)
+    .filter(run => !run.banked)
+    .reduce((sum, run) => addTokens(sum, run.tokens), banked[loop.id] ?? NO_TOKENS)
 }

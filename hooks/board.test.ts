@@ -2,7 +2,21 @@ import { expect, test } from 'claude-code/testing'
 
 import type { AgentRun, LoopPlan } from '../types'
 import { CONVENTION } from './convention'
-import { bar, elapsed, loopOf, parseLoop, shortDescription, sortLoops, stateOf } from './format'
+import {
+  NO_TOKENS,
+  addTokens,
+  bar,
+  cacheShare,
+  elapsed,
+  formatTokens,
+  loopOf,
+  loopTokens,
+  parseLoop,
+  shortDescription,
+  sortLoops,
+  stateOf,
+  totalTokens,
+} from './format'
 
 const loop = (id: string, extra: Partial<LoopPlan> = {}): LoopPlan => ({
   id,
@@ -21,6 +35,8 @@ const run = (description: string, status: AgentRun['status'] = 'running'): Agent
   endedAt: status === 'running' ? null : 1,
   status,
   lastTool: null,
+  tokens: NO_TOKENS,
+  banked: false,
 })
 
 test('formats elapsed time', () => {
@@ -90,4 +106,26 @@ test('the prompt convention describes a loop file the board can read', () => {
   expect(plan?.stages).toEqual(['Plan', 'Build', 'Review', 'PR'])
   expect(plan?.state).toBe('running')
   expect(loopOf(run('threads: Review the plan'), [plan!])).toBe('threads')
+})
+
+test('formats token counts', () => {
+  expect(formatTokens(950)).toBe('950')
+  expect(formatTokens(12_400)).toBe('12.4k')
+  expect(formatTokens(40_000)).toBe('40k')
+  expect(formatTokens(317_416)).toBe('317k')
+  expect(formatTokens(1_240_000)).toBe('1.2M')
+})
+
+test('a loop total is its saved tokens plus agents not yet saved', () => {
+  const t = (n: number) => ({ input: n, output: 0, cacheRead: 3 * n, cacheWrite: 0 })
+  const plan = loop('threads')
+  const runs = [
+    { ...run('threads: Build PR 2'), tokens: t(100), banked: false },
+    { ...run('threads: Write the brief', 'done'), tokens: t(50), banked: true },
+    { ...run('other: Something'), tokens: t(999), banked: false },
+  ]
+  const total = loopTokens(plan, runs, [plan], { threads: t(1000) })
+  expect(totalTokens(total)).toBe(4400)
+  expect(cacheShare(total)).toBe(75)
+  expect(totalTokens(addTokens(NO_TOKENS, t(1)))).toBe(4)
 })

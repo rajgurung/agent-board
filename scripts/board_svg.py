@@ -39,18 +39,19 @@ band=[
  seq(('1 other agent running  · /board','dim',0)),
 ]
 D=32
-def agent(mark,mc,typ,time,desc,tool=''):
-    parts=[(mark,mc,0),(' '+typ.ljust(19)+time.ljust(8),'fg',0)]
+def agent(mark,mc,typ,time,tok,desc,tool=''):
+    parts=[(mark,mc,0),(' '+typ.ljust(19)+time.ljust(8),'fg',0),(tok.rjust(6),'claude',0),('  ','fg',0)]
     if tool: parts.append((tool+' · ','dim',0))
     parts.append((desc,'fg',0))
     return parts
-def note(who,text): return [('○ '+who.ljust(19)+'-'.ljust(8)+text,'dim',0)]
+def note(who,text): return [('○ '+who.ljust(19)+'-'.ljust(8)+' '*8+text,'dim',0)]
 side=[
  [('Loops','fg',1)],
  [('◆','claude',0),(' login-fix','fg',0),(' 3/4','dim',0)],
- [('●','warning',0),(' ','fg',0),('threads','fg',1),(' 6/8','dim',0)],
+ [('●','warning',0),(' ','fg',0),('threads','fg',1),(' 6/8 · 1.2M','dim',0)],
  [('Other agents','fg',0),(' 1','dim',0)],
  [('Show done (5)','dim',0)],
+ [('Main session 2.4M','dim',0)],
  [('◆ waiting on you  ● running  ✓','dim',0)],
  [('done','dim',0)],
 ]
@@ -62,15 +63,16 @@ detail=[
  [('Next:','fg',1),(' PR 1 merged and live; staff engineer building PR 2 (threads)','fg',0)],
  [],
  [('Agents','fg',1)],
- agent('✓','success','product-manager','1m 42s','Write the brief'),
- agent('✓','success','designer','10m 15s','Design the mockups'),
- agent('✓','success','general-purpose','7m 58s','Write the build plan'),
- agent('✓','success','staff-reviewer','4m 34s','Review the plan'),
- agent('✓','success','staff-engineer','26m 14s','Build PR 1 reactions'),
- agent('●','warning','staff-engineer','18m 40s','Build PR 2 threads','Bash'),
+ agent('✓','success','product-manager','1m 42s','66k','Write the brief'),
+ agent('✓','success','designer','10m 15s','130k','Design the mockups'),
+ agent('✓','success','general-purpose','7m 58s','209k','Write the build plan'),
+ agent('✓','success','staff-reviewer','4m 34s','109k','Review the plan'),
+ agent('✓','success','staff-engineer','26m 14s','317k','Build PR 1 reactions'),
+ agent('●','warning','staff-engineer','18m 40s','334k','Build PR 2 threads','Bash'),
  note('you','Brief and mockup approved, all recommendations'),
  note('planner','Plan written: PR 1 reactions, PR 2 threads; 2 migrat…'),
  note('code-review-bot','Approved PR 1 (#35)'),
+ [('Loop total'.ljust(29),'fg',1),('1.2M'.rjust(6),'claude',0),('  91% read from cache','dim',0)],
  [],
  [('Links','fg',1)],
  [('Brief: ','fg',0),('docs/briefs/chat-threads.md','claude',0)],

@@ -1,6 +1,6 @@
 {
   "name": "agent-board",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A live board of your work in Claude Code: each piece of work, its stage and its agents, above the prompt and in /board",
   "author": { "name": "Raj Gurung" },
   "license": "MIT",

@@ -1,12 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, LoopPlan, RunStatus } from '../types'
+import type { AgentRun, LoopPlan, RunStatus, Tokens } from '../types'
 import { CONVENTION } from './convention'
 import {
   MARK,
+  NO_TOKENS,
   STATE_MARK,
+  addTokens,
   bar,
+  cacheShare,
+  formatTokens,
+  loopTokens,
   loopOf,
   parseLoop,
   runTime,
@@ -14,6 +19,7 @@ import {
   shortDescription,
   sortLoops,
   stateOf,
+  totalTokens,
 } from './format'
 
 const PANE = 'agent-board'
@@ -27,6 +33,8 @@ const loops = atom({ plugin: 'agent-board', key: 'loops' } as const, [] as LoopP
 const selected = atom({ plugin: 'agent-board', key: 'selected' } as const, null as string | null)
 const showDone = atom({ plugin: 'agent-board', key: 'showDone' } as const, false)
 const now = atom({ plugin: 'agent-board', key: 'now' } as const, 0)
+const main = atom({ plugin: 'agent-board', key: 'main' } as const, NO_TOKENS)
+const banked = atom({ plugin: 'agent-board', key: 'banked' } as const, {} as Record<string, Tokens>)
 
 const STATUS_COLOR = { running: 'warning', done: 'success', stopped: 'inactive', failed: 'error' } as const
 const STATE_COLOR = { running: 'warning', waiting: 'claude', done: 'success' } as const
@@ -48,6 +56,28 @@ async function readLoops($: EngineInterface): Promise<{ text: string; list: Loop
   return { text: found.map(f => f.id + f.text).join('\n'), list }
 }
 
+// Adds a finished agent's tokens to its loop's saved total, once.
+async function bankRun($: EngineInterface, id: string): Promise<void> {
+  const list = await read($, runs)
+  const run = list.find(r => r.id === id)
+  const loopId = run && !run.banked ? loopOf(run, await read($, loops)) : null
+  if (!run || !loopId) return
+  const saved = await loadBanked($)
+  saved[loopId] = addTokens(saved[loopId] ?? NO_TOKENS, run.tokens)
+  await $.store.set(await storeKey($), saved)
+  await update($, banked, () => saved)
+  await update($, runs, all => all.map(r => (r.id === id ? { ...r, banked: true } : r)))
+}
+
+// Saved loop totals live in the plugin's store, one key per project.
+async function storeKey($: EngineInterface): Promise<string> {
+  return `tokens:${await $.session.root()}`
+}
+
+async function loadBanked($: EngineInterface): Promise<Record<string, Tokens>> {
+  const saved = await $.store.get(await storeKey($))
+  return saved && typeof saved === 'object' ? (saved as Record<string, Tokens>) : {}
+}
 
 export const register: Register = on => {
   let lastText: string | null = null
@@ -56,6 +86,10 @@ export const register: Register = on => {
     await $.command.register({ name: 'board', description: 'Show every loop and its agents' })
     const t = await $.clock.now()
     await update($, now, () => t)
+    const saved = await loadBanked($)
+    await update($, banked, () => saved)
+    // Runs kept from before token counting have no counts yet.
+    await update($, runs, list => list.map(run => ({ ...run, tokens: run.tokens ?? NO_TOKENS, banked: run.banked ?? false })))
 
     // Tick the clock only while something runs, so idle sessions do not redraw.
     $.clock.every(1000, async () => {
@@ -99,6 +133,8 @@ export const register: Register = on => {
         endedAt: null,
         status: 'running',
         lastTool: null,
+        tokens: NO_TOKENS,
+        banked: false,
       }
       await update($, runs, list => [...list, run].slice(-100))
       await update($, now, () => t)
@@ -116,6 +152,31 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // Every model call reports its tokens: count them for its agent, or for the main conversation.
+  on('turn.step', async function* ($, e, next) {
+    const step = yield* next(e)
+    const usage = step.usage
+    if (usage) {
+      const used: Tokens = {
+        input: usage.input_tokens,
+        output: usage.output_tokens,
+        cacheRead: usage.cache_read_input_tokens,
+        cacheWrite: usage.cache_creation_input_tokens,
+      }
+      const id = e.agentId
+      try {
+        if (id) {
+          await update($, runs, list => list.map(run => (run.id === id ? { ...run, tokens: addTokens(run.tokens, used) } : run)))
+        } else {
+          await update($, main, t => addTokens(t, used))
+        }
+      } catch {
+        // Counting must never break a model call.
+      }
+    }
+    return step
+  })
+
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) {
       const id = e.agentId
@@ -125,6 +186,7 @@ export const register: Register = on => {
         list.map(run => (run.id === id && run.status === 'running' ? { ...run, status, endedAt } : run)),
       )
       await update($, now, () => endedAt)
+      await bankRun($, id)
     }
     return next(e)
   })
@@ -179,6 +241,9 @@ export const register: Register = on => {
     const at = await read($, now)
     const wantDone = await read($, showDone)
     const chosen = await read($, selected)
+    const saved = await read($, banked)
+    const mainTokens = await read($, main)
+    const tokensOf = (loop: LoopPlan) => loopTokens(loop, list, all, saved)
 
     const sorted = sortLoops(all, list)
     const done = sorted.filter(loop => stateOf(loop, list, all) === 'done')
@@ -200,6 +265,7 @@ export const register: Register = on => {
             <Button key={`loop-${loop.id}`} plain onPress={choose(loop.id)}>
               <Text color={STATE_COLOR[state]}>{STATE_MARK[state]}</Text>{' '}
               <Text bold={isOn}>{loop.id}</Text> <Text dimColor>{loop.stage}/{loop.stages.length}</Text>
+              {totalTokens(tokensOf(loop)) > 0 && <Text dimColor> · {formatTokens(totalTokens(tokensOf(loop)))}</Text>}
             </Button>
           )
         })}
@@ -213,6 +279,7 @@ export const register: Register = on => {
             <Text dimColor>{wantDone ? 'Hide done' : `Show done (${done.length})`}</Text>
           </Button>
         )}
+        {totalTokens(mainTokens) > 0 && <Text dimColor>Main session {formatTokens(totalTokens(mainTokens))}</Text>}
         <Text dimColor>◆ waiting on you  ● running  ✓ done</Text>
       </Box>
     )
@@ -225,6 +292,7 @@ export const register: Register = on => {
           <Text key={run.id} wrap="truncate-end">
             <Text color={STATUS_COLOR[run.status]}>{MARK[run.status]}</Text> {run.type.slice(0, 18).padEnd(19)}
             {runTime(run, at).padEnd(8)}
+            <Text color="claude">{formatTokens(totalTokens(run.tokens)).padStart(6)}</Text>{'  '}
             {run.status === 'running' && run.lastTool ? <Text dimColor>{run.lastTool} · </Text> : ''}
             {shortDescription(run)}
           </Text>
@@ -283,9 +351,20 @@ export const register: Register = on => {
             <Text key={`note-${agent}`} dimColor wrap="truncate-end">
               ○ {agent.slice(0, 18).padEnd(19)}
               {'-'.padEnd(8)}
+              {''.padEnd(8)}
               {note}
             </Text>
           ))}
+          {(() => {
+            const total = tokensOf(current)
+            return totalTokens(total) > 0 ? (
+              <Text>
+                <Text bold>{'Loop total'.padEnd(29)}</Text>
+                <Text color="claude">{formatTokens(totalTokens(total)).padStart(6)}</Text>
+                <Text dimColor>  {cacheShare(total)}% read from cache</Text>
+              </Text>
+            ) : null
+          })()}
           {current.links && Object.keys(current.links).length > 0 && (
             <Box flexDirection="column">
               <Text> </Text>
