@@ -1,0 +1,13 @@
+{
+  "name": "agent-board",
+  "owner": {
+    "name": "Raj Gurung"
+  },
+  "plugins": [
+    {
+      "name": "agent-board",
+      "source": "./"
+    }
+  ],
+  "description": "Agent board: a live board of multi-step work and its agents in Claude Code"
+}
