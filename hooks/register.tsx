@@ -14,12 +14,15 @@ import {
   loopTokens,
   loopOf,
   parseLoop,
+  pullRequests,
   runTime,
   runsFor,
   shortDescription,
   sortLoops,
+  stateLabel,
   stateOf,
   totalTokens,
+  warnings,
 } from './format'
 
 const PANE = 'agent-board'
@@ -35,25 +38,67 @@ const showDone = atom({ plugin: 'agent-board', key: 'showDone' } as const, false
 const now = atom({ plugin: 'agent-board', key: 'now' } as const, 0)
 const main = atom({ plugin: 'agent-board', key: 'main' } as const, NO_TOKENS)
 const banked = atom({ plugin: 'agent-board', key: 'banked' } as const, {} as Record<string, Tokens>)
+const merged = atom({ plugin: 'agent-board', key: 'merged' } as const, [] as string[])
+
+const PR_CHECK_MS = 5 * 60 * 1000
 
 const STATUS_COLOR = { running: 'warning', done: 'success', stopped: 'inactive', failed: 'error' } as const
-const STATE_COLOR = { running: 'warning', waiting: 'claude', done: 'success' } as const
+const STATE_COLOR = { running: 'warning', waiting: 'claude', external: 'inactive', done: 'success' } as const
 
 // Every loop file in .claude/loops, plus the older single loop.json.
 async function readLoops($: EngineInterface): Promise<{ text: string; list: LoopPlan[] }> {
-  const found: { id: string; text: string }[] = []
+  // Only files directly in the folder count, so an archive/ folder inside it is left out.
+  const found: { id: string; text: string; mtimeMs: number }[] = []
   if (await $.fs.exists(LOOPS_DIR)) {
     const entries = await $.fs.list(LOOPS_DIR)
     for (const entry of entries) {
       if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
       const text = await $.fs.read(`${LOOPS_DIR}/${entry.name}`)
-      found.push({ id: entry.name.replace(/\.json$/, ''), text: String(text) })
+      found.push({ id: entry.name.replace(/\.json$/, ''), text: String(text), mtimeMs: entry.mtimeMs })
     }
   }
-  if (await $.fs.exists(LEGACY_FILE)) found.push({ id: '', text: String(await $.fs.read(LEGACY_FILE)) })
+  if (await $.fs.exists(LEGACY_FILE)) {
+    const stat = await $.fs.stat(LEGACY_FILE)
+    found.push({ id: '', text: String(await $.fs.read(LEGACY_FILE)), mtimeMs: stat?.mtimeMs ?? 0 })
+  }
   found.sort((a, b) => a.id.localeCompare(b.id))
-  const list = found.map(f => parseLoop(f.text, f.id)).filter((p): p is LoopPlan => p !== null)
-  return { text: found.map(f => f.id + f.text).join('\n'), list }
+  const list = found
+    .map(f => {
+      const plan = parseLoop(f.text, f.id)
+      return plan && f.mtimeMs > 0 ? { ...plan, updatedAt: f.mtimeMs } : plan
+    })
+    .filter((p): p is LoopPlan => p !== null)
+  return { text: found.map(f => f.id + f.mtimeMs + f.text).join('\n'), list }
+}
+
+// Asks gh whether every PR linked from each open loop is merged. Merged PRs are
+// remembered, so each is looked up until it merges and then never again.
+const mergedPrs = new Set<string>()
+async function checkMerged($: EngineInterface, list: LoopPlan[]): Promise<void> {
+  const ids: string[] = []
+  for (const loop of list) {
+    if (loop.state === 'done') continue
+    const prs = pullRequests(loop)
+    if (prs.length === 0) continue
+    let all = true
+    for (const pr of prs) {
+      const key = `${pr.repo}#${pr.number}`
+      if (!mergedPrs.has(key)) {
+        try {
+          const { exitCode, stdout } = await $.process.run(
+            ['gh', 'pr', 'view', String(pr.number), '--repo', pr.repo, '--json', 'state', '--jq', '.state'],
+            { timeoutMs: 15_000 },
+          )
+          if (exitCode === 0 && String(stdout).trim() === 'MERGED') mergedPrs.add(key)
+        } catch {
+          // No gh, no network or not signed in: the check stays quiet.
+        }
+      }
+      if (!mergedPrs.has(key)) all = false
+    }
+    if (all) ids.push(loop.id)
+  }
+  await update($, merged, () => ids)
 }
 
 // Adds a finished agent's tokens to its loop's saved total, once.
@@ -106,6 +151,16 @@ export const register: Register = on => {
       lastText = text
       await update($, loops, () => list)
     })
+
+    // Staleness is counted in days, so a slow tick is enough to keep it honest.
+    $.clock.every(10 * 60 * 1000, async () => {
+      const t = await $.clock.now()
+      await update($, now, () => t)
+    })
+
+    const prCheck = async () => checkMerged($, (await readLoops($)).list)
+    void prCheck()
+    $.clock.every(PR_CHECK_MS, prCheck)
 
     return next(e)
   })
@@ -196,6 +251,7 @@ export const register: Register = on => {
     const all = await read($, loops)
     const list = await read($, runs)
     const at = await read($, now)
+    const closable = await read($, merged)
     const open = sortLoops(all, list).filter(loop => stateOf(loop, list, all) !== 'done')
     const strays = list.filter(run => run.status === 'running' && loopOf(run, all) === null)
 
@@ -209,6 +265,7 @@ export const register: Register = on => {
         {open.slice(0, BAND_LOOPS).map(loop => {
           const state = stateOf(loop, list, all)
           const busy = runsFor(loop, list, all).filter(run => run.status === 'running')
+          const warn = warnings(loop, state, at, closable.includes(loop.id))
           return (
             <Text key={loop.id} wrap="truncate-end">
               <Text color={STATE_COLOR[state]}>{STATE_MARK[state]}</Text> <Text bold>{loop.id.padEnd(width)}</Text>{' '}
@@ -218,8 +275,11 @@ export const register: Register = on => {
               {busy.length > 0 ? (
                 busy.map(run => `${run.type} ${runTime(run, at)}`).join(', ')
               ) : (
-                <Text dimColor>{state === 'waiting' ? `waiting: ${loop.next}` : loop.next}</Text>
+                <Text dimColor>
+                  {state === 'waiting' ? `waiting: ${loop.next}` : state === 'external' ? `${stateLabel(loop, state)}: ${loop.next}` : loop.next}
+                </Text>
               )}
+              {warn.length > 0 && <Text color="warning"> ⚠ {warn.join(' · ')}</Text>}
             </Text>
           )
         })}
@@ -243,6 +303,7 @@ export const register: Register = on => {
     const chosen = await read($, selected)
     const saved = await read($, banked)
     const mainTokens = await read($, main)
+    const closable = await read($, merged)
     const tokensOf = (loop: LoopPlan) => loopTokens(loop, list, all, saved)
 
     const sorted = sortLoops(all, list)
@@ -261,11 +322,13 @@ export const register: Register = on => {
         {shown.map(loop => {
           const state = stateOf(loop, list, all)
           const isOn = current !== OTHER && current?.id === loop.id
+          const warn = warnings(loop, state, at, closable.includes(loop.id))
           return (
             <Button key={`loop-${loop.id}`} plain onPress={choose(loop.id)}>
               <Text color={STATE_COLOR[state]}>{STATE_MARK[state]}</Text>{' '}
               <Text bold={isOn}>{loop.id}</Text> <Text dimColor>{loop.stage}/{loop.stages.length}</Text>
               {totalTokens(tokensOf(loop)) > 0 && <Text dimColor> · {formatTokens(totalTokens(tokensOf(loop)))}</Text>}
+              {warn.length > 0 && <Text color="warning"> ⚠</Text>}
             </Button>
           )
         })}
@@ -280,7 +343,8 @@ export const register: Register = on => {
           </Button>
         )}
         {totalTokens(mainTokens) > 0 && <Text dimColor>Main session {formatTokens(totalTokens(mainTokens))}</Text>}
-        <Text dimColor>◆ waiting on you  ● running  ✓ done</Text>
+        <Text dimColor>◆ waiting on you  ● running</Text>
+        <Text dimColor>◇ waiting on others  ✓ done  ⚠ check</Text>
       </Box>
     )
 
@@ -318,6 +382,7 @@ export const register: Register = on => {
       )
     } else {
       const state = stateOf(current, list, all)
+      const warn = warnings(current, state, at, closable.includes(current.id))
       const mine = runsFor(current, list, all)
       const ran = new Set(mine.map(run => run.type))
       const planned = Object.entries(current.notes ?? {}).filter(([agent]) => !ran.has(agent))
@@ -328,7 +393,7 @@ export const register: Register = on => {
           </Text>
           <Text>
             <Text color={STATE_COLOR[state]}>
-              {STATE_MARK[state]} {state === 'waiting' ? 'waiting on you' : state}
+              {STATE_MARK[state]} {stateLabel(current, state)}
             </Text>
             {'   '}
             <Text color="claude">{bar(current.stage, current.stages.length, 20)}</Text> {current.stage}/
@@ -339,6 +404,11 @@ export const register: Register = on => {
               .map((name, i) => (i + 1 < current.stage ? `✓ ${name}` : i + 1 === current.stage ? `[${name}]` : name))
               .join(' → ')}
           </Text>
+          {warn.map(text => (
+            <Text key={`warn-${text}`} color="warning">
+              ⚠ {text}
+            </Text>
+          ))}
           {current.next !== '' && (
             <Text wrap="wrap">
               <Text bold>Next:</Text> {current.next}

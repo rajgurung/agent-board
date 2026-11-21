@@ -25,7 +25,12 @@ export const MARK: Record<AgentRun['status'], string> = {
   failed: '✗',
 }
 
-export const STATE_MARK = { running: '●', waiting: '◆', done: '✓' } as const
+export const STATE_MARK = { running: '●', waiting: '◆', external: '◇', done: '✓' } as const
+
+export type BoardState = keyof typeof STATE_MARK
+
+const DAY = 24 * 60 * 60 * 1000
+export const STALE_DAYS = 3
 
 export function parseLoop(text: string, id = ''): LoopPlan | null {
   try {
@@ -44,6 +49,7 @@ export function parseLoop(text: string, id = ''): LoopPlan | null {
       state,
       notes: record(raw.notes),
       links: record(raw.links),
+      waitingOn: typeof raw.waiting_on === 'string' && raw.waiting_on.trim() !== '' ? raw.waiting_on.trim() : undefined,
     }
   } catch {
     return null
@@ -63,15 +69,54 @@ export function runsFor(loop: LoopPlan, runs: AgentRun[], loops: LoopPlan[]): Ag
   return runs.filter(run => loopOf(run, loops) === loop.id)
 }
 
-export function stateOf(loop: LoopPlan, runs: AgentRun[], loops: LoopPlan[]): 'running' | 'waiting' | 'done' {
-  if (loop.state === 'done') return 'done'
-  if (runsFor(loop, runs, loops).some(run => run.status === 'running')) return 'running'
-  return loop.state ?? 'waiting'
+// A loop waits on the person unless its file names someone else (Apple, Google, a reviewer).
+export function waitsOnYou(loop: LoopPlan): boolean {
+  return loop.waitingOn === undefined || /^(you|me|user)$/i.test(loop.waitingOn)
 }
 
-const ORDER = { waiting: 0, running: 1, done: 2 } as const
+export function stateOf(loop: LoopPlan, runs: AgentRun[], loops: LoopPlan[]): BoardState {
+  if (loop.state === 'done') return 'done'
+  if (runsFor(loop, runs, loops).some(run => run.status === 'running')) return 'running'
+  const state = loop.state ?? 'waiting'
+  return state === 'waiting' && !waitsOnYou(loop) ? 'external' : state
+}
 
-// Waiting on you first, then running, then done; most recent file order within.
+const ORDER = { waiting: 0, running: 1, external: 2, done: 3 } as const
+
+// The words for a state: "waiting on you", "waiting on Apple".
+export function stateLabel(loop: LoopPlan, state: BoardState): string {
+  if (state === 'waiting') return 'waiting on you'
+  if (state === 'external') return `waiting on ${loop.waitingOn}`
+  return state
+}
+
+// Pull requests linked from a loop file, as { repo, number } (github.com URLs only).
+export function pullRequests(loop: LoopPlan): { repo: string; number: number; url: string }[] {
+  const found = new Map<string, { repo: string; number: number; url: string }>()
+  for (const url of Object.values(loop.links ?? {})) {
+    const m = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(url)
+    if (m) found.set(`${m[1]}#${m[2]}`, { repo: m[1]!, number: Number(m[2]), url })
+  }
+  return [...found.values()]
+}
+
+// What looks wrong with an open loop: a stage past the end, no update for days,
+// or every linked PR merged while the file still says it's open.
+export function warnings(loop: LoopPlan, state: BoardState, at: number, allMerged: boolean): string[] {
+  if (state === 'done') return []
+  const found: string[] = []
+  if (loop.stages.length > 0 && (loop.stage > loop.stages.length || loop.stage < 1)) {
+    found.push(`stage ${loop.stage} of ${loop.stages.length}`)
+  }
+  if (allMerged) found.push('PRs merged: close it?')
+  if (loop.updatedAt !== undefined && at > 0) {
+    const days = Math.floor((at - loop.updatedAt) / DAY)
+    if (days >= STALE_DAYS) found.push(`no update for ${days}d`)
+  }
+  return found
+}
+
+// Waiting on you first, then running, then waiting on others, then done; file order within.
 export function sortLoops(loops: LoopPlan[], runs: AgentRun[]): LoopPlan[] {
   return [...loops].sort((a, b) => ORDER[stateOf(a, runs, loops)] - ORDER[stateOf(b, runs, loops)])
 }

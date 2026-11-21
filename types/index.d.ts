@@ -35,6 +35,10 @@ export type LoopPlan = {
   state?: 'running' | 'waiting' | 'done'
   notes?: Record<string, string>
   links?: Record<string, string>
+  // Who a waiting loop waits on, from "waiting_on"; unset means you.
+  waitingOn?: string
+  // When the file last changed (ms), read from the folder listing.
+  updatedAt?: number
 }
 
 declare module 'claude-code' {
@@ -49,6 +53,8 @@ declare module 'claude-code' {
       main: Tokens
       // Saved totals of finished agents, by loop id, for this project.
       banked: Record<string, Tokens>
+      // Loop ids whose linked PRs are all merged, checked with gh.
+      merged: string[]
     }
   }
 }
