@@ -12,10 +12,13 @@ import {
   loopOf,
   loopTokens,
   parseLoop,
+  pullRequests,
   shortDescription,
   sortLoops,
+  stateLabel,
   stateOf,
   totalTokens,
+  warnings,
 } from './format'
 
 const loop = (id: string, extra: Partial<LoopPlan> = {}): LoopPlan => ({
@@ -128,4 +131,49 @@ test('a loop total is its saved tokens plus agents not yet saved', () => {
   expect(totalTokens(total)).toBe(4400)
   expect(cacheShare(total)).toBe(75)
   expect(totalTokens(addTokens(NO_TOKENS, t(1)))).toBe(4)
+})
+
+test('a loop waiting on someone else sorts after running work, with its own label', () => {
+  const loops = [
+    loop('apple', { state: 'waiting', waitingOn: 'Apple' }),
+    loop('build'),
+    loop('decide', { state: 'waiting' }),
+    loop('mine', { state: 'waiting', waitingOn: 'you' }),
+  ]
+  const runs = [run('build: compiling')]
+  expect(stateOf(loops[0]!, runs, loops)).toBe('external')
+  expect(stateOf(loops[3]!, runs, loops)).toBe('waiting')
+  expect(stateLabel(loops[0]!, 'external')).toBe('waiting on Apple')
+  expect(sortLoops(loops, runs).map(l => l.id)).toEqual(['decide', 'mine', 'build', 'apple'])
+  expect(parseLoop(JSON.stringify({ decision: 'a', stages: [], waiting_on: ' Google ' }))?.waitingOn).toBe('Google')
+  expect(parseLoop(JSON.stringify({ decision: 'a', stages: [], waiting_on: '' }))?.waitingOn).toBe(undefined)
+})
+
+test('finds pull requests in a loop\'s links', () => {
+  const plan = loop('x', {
+    links: {
+      pr: 'https://github.com/rajgurung/softly/pull/223',
+      again: 'https://github.com/rajgurung/softly/pull/223/files',
+      other: 'https://github.com/rajgurung/agent-board/pull/4',
+      doc: 'https://claude.ai/artifact/abc',
+    },
+  })
+  expect(pullRequests(plan).map(p => `${p.repo}#${p.number}`)).toEqual(['rajgurung/softly#223', 'rajgurung/agent-board#4'])
+})
+
+test('warns about a stage past the end, a stale file and merged PRs, but never on done work', () => {
+  const day = 24 * 60 * 60 * 1000
+  const now = 10 * day
+  const over = loop('over', { stage: 8, stages: ['Plan', 'Build', 'PR'], updatedAt: now })
+  expect(warnings(over, 'running', now, false)).toEqual(['stage 8 of 3'])
+  const old = loop('old', { updatedAt: now - 4 * day })
+  expect(warnings(old, 'waiting', now, true)).toEqual(['PRs merged: close it?', 'no update for 4d'])
+  expect(warnings(loop('fresh', { updatedAt: now - 2 * day }), 'running', now, false)).toEqual([])
+  expect(warnings(old, 'done', now, true)).toEqual([])
+})
+
+test('the convention teaches waiting_on, PR links, closing at merge and the archive', () => {
+  expect(CONVENTION).toContain('"waiting_on"')
+  expect(CONVENTION).toContain('github.com URL')
+  expect(CONVENTION).toContain('.claude/loops/archive/')
 })

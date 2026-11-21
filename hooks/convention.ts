@@ -9,6 +9,10 @@ The agent-board plugin shows the person what you are working on, above the promp
 - The file is JSON: {"decision": "<id>", "title": "<one line>", "stages": ["Plan", "Build", "Review", "PR"], "stage": 1, "next": "<what happens next>", "state": "running", "notes": {"<agent or person>": "<short note>"}, "links": {"<name>": "<path or URL>"}}
 - Pick stages that fit the work. "stage" is the 1-based step you are on.
 - Set "state" to "waiting" when you need the person to decide or approve something, "running" while you or agents work, and "done" when it is finished. Update "next" in the same edit.
-- Update the file at each step, not only at the end.
+- When the work waits on someone other than the person (an app review, a vendor, a teammate), keep "state": "waiting" and add "waiting_on": "<who>", like "Apple". Leave it out when it waits on the person.
+- Put every pull request in "links" as its github.com URL. The board checks them and flags a loop whose PRs have all merged while it is still open.
+- Update the file at each step, not only at the end. Close it ("state": "done") in the same step as the merge or release that finishes it, not later. After the context is summarized, and at the start of a session, re-read the open loop files and fix any that are out of date.
+- Keep "stage" within the stages list; add a stage rather than counting past the end.
+- Move loop files that have been done for two weeks into .claude/loops/archive/. The board leaves that folder out.
 - Start every subagent's description with the id and a colon, like "threads: Review the plan", so the board shows it under that work.
 - If the project is a git repository, suggest adding .claude/loops/ to .gitignore.`

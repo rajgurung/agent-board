@@ -17,7 +17,10 @@ token total:
 
 - **◆ waiting on you.** Claude needs a decision or an approval.
 - **● running.** Claude or its agents are working.
+- **◇ waiting on others.** An app review, a vendor or a teammate. These sit
+  below your own work, so they don't bury what needs you.
 - **✓ done.** The work is finished. `/board` can show or hide finished work.
+- **⚠ check.** Something about the file looks out of date (see below).
 - **○ a note.** A line from the loop file's `notes`, for people or steps that
   aren't agents, like your approval or a code review bot.
 
@@ -49,7 +52,7 @@ instructions explaining two habits, and the board reads what they produce.
      "next": "Staff reviewer checking the plan",
      "state": "running",
      "notes": { "designer": "Mockup approved" },
-     "links": { "Plan": "docs/plans/chat-threads.md" }
+     "links": { "Plan": "docs/plans/chat-threads.md", "PR": "https://github.com/you/app/pull/12" }
    }
    ```
 
@@ -65,6 +68,25 @@ finish as they happen.
 
 You can also write or edit a loop file yourself. The board shows whatever is in
 the folder.
+
+### Keeping it honest
+
+A board is only useful while its files are true. The board flags an open piece
+of work with ⚠ when:
+
+- **Its PRs have all merged.** Put each pull request's github.com URL in
+  `links`. Every five minutes the board asks `gh` whether they're merged, and
+  shows "PRs merged: close it?" if the file still says it's open. Without `gh`
+  the check stays quiet.
+- **Nothing has changed for 3 days.** "no update for 4d".
+- **Its stage is past the end.** "stage 8 of 5".
+
+Work waiting on someone else gets `"waiting_on": "Apple"` (or Google, a
+reviewer, a teammate). Leave it out when it waits on you.
+
+Finished files can move into `.claude/loops/archive/`. The board only reads
+files directly in `.claude/loops/`, so archived work drops off the list. The
+plugin never moves or edits your files itself; it asks Claude to.
 
 You'll probably want to keep these files out of git:
 
